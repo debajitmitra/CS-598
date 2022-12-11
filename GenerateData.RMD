@@ -1,0 +1,176 @@
+---
+title: "Generate Data"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(recommenderlab)
+library(ggplot2)
+library(data.table)
+library(reshape2)
+
+library(ISLR)
+```
+
+```{r}
+read <- function(fileName, separators) {
+    data <- readLines(con <- file(fileName))
+    close(con)
+    records <- sapply(data, strsplit, split=separators)
+    dataFrame <- data.frame(t(sapply(records,c)))
+    rownames(dataFrame) <- 1: nrow(dataFrame)
+    return(as.data.frame(dataFrame,stringsAsFactors = FALSE))
+}
+
+
+movies = read("data/movies.dat", "::")
+ratings = read("data/ratings.dat", "::")
+users = read("data/users.dat", "::")
+
+colnames(movies) = c('movieId', 'title', 'genres')
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+colnames(users) = c('UserID', 'Gender', 'Age', 'Occupation', 'Zip-code')
+
+head(movies)
+head(ratings)
+head(users)
+```
+
+
+```{r pressure, echo=FALSE}
+set.seed(2064)
+smp_siz = floor(0.75*nrow(users))
+train_ind = sample(seq_len(nrow(users)),size = smp_siz)
+
+users.train =users[train_ind,]
+users.test=users[-train_ind,]
+
+nrow(users.train)
+nrow(users.test)
+
+
+ids = which(ratings$UserID %in% users.train$UserID)
+length(ids)
+head(ids)
+ratings.train = ratings[ids,]
+ratings.test = ratings[-ids,]
+head(ratings.train)
+head(ratings.test)
+
+
+tmp_file_name <- paste("data/train/", "users.dat", sep="")
+df = data.frame(users.train)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+tmp_file_name <- paste("data/test/", "users.dat", sep="")
+df = data.frame(users.test)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+
+tmp_file_name <- paste("data/train/", "ratings.dat", sep="")
+df = data.frame(ratings.train)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+tmp_file_name <- paste("data/test/", "ratings.dat", sep="")
+df = data.frame(ratings.test)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+
+tmp_file_name <- paste("data/train/", "movies.dat", sep="")
+df = data.frame(movies)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+tmp_file_name <- paste("data/test/", "movies.dat", sep="")
+df = data.frame(movies)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+
+aggr = aggregate(as.numeric( ratings[,"Rating"]), list(ratings$MovieID), mean)
+colnames(aggr) = c('MovieID', 'AveRating')
+aggr[,2] = round(aggr[,2])
+
+aggr = merge(aggr, movies)
+
+aggr = aggr[order(as.numeric(aggr$MovieID) ),]
+
+head(aggr)
+
+
+tmp_file_name <- paste("data/", "aggr.dat", sep="")
+df = data.frame(aggr)
+nrow(df)
+write.table(df,file=tmp_file_name,col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+
+
+
+```
+
+
+```{r}
+
+genres <- as.data.frame(movies[,3], stringsAsFactors=FALSE)
+genres2 <- as.data.frame(tstrsplit(genres[,1], '[|]', type.convert=TRUE), stringsAsFactors=FALSE)
+colnames(genres2)<- c(1:5) 
+
+genre_list <- c("Action", "Adventure", "Animation", "Children", 
+                "Comedy", "Crime","Documentary", "Drama", "Fantasy",
+                "Film-Noir", "Horror", "Musical", "Mystery","Romance",
+                "Sci-Fi", "Thriller", "War", "Western")
+
+genre_matrix <- matrix(0,nrow(movies) + 1,18) 
+genre_matrix[1,] <- genre_list 
+colnames(genre_matrix) <- genre_list 
+
+for (i in 1:nrow(genres2)) {
+  for (c in 1:ncol(genres2)) {
+    genmat_col = which(genre_matrix[1,] == genres2[i,c])
+    genre_matrix[i+1,genmat_col] <- 1
+  }
+}
+
+
+genre_matrix2 <- as.data.frame(genre_matrix[-1,], stringsAsFactors=FALSE)
+for (c in 1:ncol(genre_matrix2)) {
+  genre_matrix2[,c] <- as.integer(genre_matrix2[,c])
+}
+
+years <- as.data.frame(movies$title, stringsAsFactors=FALSE)
+head(movies$title,12)
+library(data.table)
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+
+years <- as.data.frame(substr(substrRight(substrRight(years$`movies$title`, 6),5),1,4))
+
+colMax <- function(data) sapply(data, max, na.rm = TRUE)
+colMax(years)
+length(movies[,1])
+length(substr(movies[,2],1,nchar(movies[,2])-6))
+length(years)
+length(genre_matrix2)
+
+search_matrix <- cbind(movies[,1], movies[,2], years, movies[,3])
+colnames(search_matrix) <- c("MovieID", "title", "year", 'genres')
+
+df = data.frame(search_matrix)
+nrow(df)
+ 
+
+tmp_file_name <-paste("data/", "movies_clean.dat", sep="")
+write.table(df,file=tmp_file_name, col.names=FALSE,row.names=FALSE,sep="::",quote=FALSE)
+
+
+search_matrix <- read(tmp_file_name, "::")
+colnames(search_matrix) = c("MovieID", "title", "year", 'genres')
+nrow(search_matrix)
+head(search_matrix)
+```
+
