@@ -1,0 +1,522 @@
+---
+title: "Project_4_2064_debajit2 : Movie Recommendation"
+author: Debajit Mitra
+date: '2022-12-01'
+output: html_document
+---
+
+***
+
+
+
+```{r}
+start_time <- Sys.time()
+
+library(recommenderlab)
+library(ggplot2)
+library(data.table)
+library(reshape2)
+library(knitr)
+```
+
+
+### Project Overview
+In this project, I developed content based recommendation system(System I) and collaborative recommendation system(System II) .
+
+* **System I:** Recommendation based on genres. Below two recommendation approaches are implemented using user's favorite genre : 
+   + __Method I:__  Highly-rate movies - select the 4 or more review
+   + __Method II:__ Most trendy movies - the newest movie
+
+* **System II:** Collaborative recommendation system. Two collaborative recommendation algorithms are implemented : 
+   + __User-based (UBCF):__ UBCF recommends items by finding similar users to the user with assumption that similar users will have similar taste.
+   + __Item-based (IBCF):__ IBCF recommends items by finding similarities between different items in the data, using Euclidean Distance similarity measures.
+   
+
+
+```{r}
+set.seed(2064)
+read <- function(fileName, separators) {
+    data <- readLines(con <- file(fileName))
+    close(con)
+    records <- sapply(data, strsplit, split=separators)
+    dataFrame <- data.frame(t(sapply(records,c)))
+    rownames(dataFrame) <- 1: nrow(dataFrame)
+    return(as.data.frame(dataFrame,stringsAsFactors = FALSE))
+}
+
+
+basedir ="data/"
+movies = read(paste0(basedir,"movies.dat"), "::")
+ratings = read(paste0(basedir,"ratings.dat"), "::")
+users = read(paste0(basedir, "users.dat"), "::")
+colnames(movies) = c('MovieID', 'title', 'genres')
+colnames(ratings) = c('UserID', 'MovieID', 'Rating', 'Timestamp')
+colnames(users) = c('UserID', 'Gender', 'Age', 'Occupation', 'Zip-code')
+
+moviesList <- read(paste0(basedir,"aggr.dat"), "::")
+movies_clean <- read(paste0(basedir,"movies_clean.dat"), "::")
+
+colnames(moviesList) = c( 'MovieID', 'AveRating', 'title', 'genres')
+colnames(movies_clean) = c("MovieID", "title", "year", 'genres')
+genre_list <- c("Action", "Adventure", "Animation", "Children", 
+                "Comedy", "Crime","Documentary", "Drama", "Fantasy",
+                "Film-Noir", "Horror", "Musical", "Mystery","Romance",
+                "Sci-Fi", "Thriller", "War", "Western")
+```
+
+
+### Dataset
+The dataset contains about 1 million ratings and the details as following:
+
+* Number of movies: $`r nrow(movies)`$
+* Number of ratings: $`r nrow(ratings)`$
+* Number of users: $`r nrow(users)`$
+
+The dataset README shows:
+Genres are pipe-separated and are selected from the following genres:
+
+* Action
+* Adventure
+* Animation
+* Children's
+* Comedy
+* Crime
+* Documentary
+* Drama
+* Fantasy
+* Film-Noir
+* Horror
+* Musical
+* Mystery
+* Romance
+* Sci-Fi
+* Thriller
+* War
+* Western
+	
+
+
+
+```{r}
+
+genres <- as.data.frame(movies[,3], stringsAsFactors=FALSE)
+genres2 <- as.data.frame(tstrsplit(genres[,1], '[|]', type.convert=TRUE), stringsAsFactors=FALSE)
+colnames(genres2)<- c(1:5)  
+
+genre_list <- c("Action", "Adventure", "Animation", "Children", 
+                "Comedy", "Crime","Documentary", "Drama", "Fantasy",
+                "Film-Noir", "Horror", "Musical", "Mystery","Romance",
+                "Sci-Fi", "Thriller", "War", "Western")
+
+
+genre_matrix <- matrix(0,nrow(movies) + 1,18) 
+genre_matrix[1,] <- genre_list 
+colnames(genre_matrix) <- genre_list 
+
+for (i in 1:nrow(genres2)) {
+  for (c in 1:ncol(genres2)) {
+    genmat_col = which(genre_matrix[1,] == genres2[i,c])
+    genre_matrix[i+1,genmat_col] <- 1
+  }
+}
+
+genre_matrix2 <- as.data.frame(genre_matrix[-1,], stringsAsFactors=FALSE) 
+for (c in 1:ncol(genre_matrix2)) {
+  genre_matrix2[,c] <- as.integer(genre_matrix2[,c])
+} 
+
+years <- as.data.frame(movies$title, stringsAsFactors=FALSE)
+
+substrRight <- function(x, n){
+  substr(x, nchar(x)-n+1, nchar(x))
+}
+
+years <- as.data.frame(substr(substrRight(substrRight(years$`movies$title`, 6),5),1,4))
+colMin <- function(data) sapply(data, min, na.rm = TRUE)
+colMax <- function(data) sapply(data, max, na.rm = TRUE)
+
+min_year = colMin(years)
+max_year = colMax(years)
+
+```
+
+The movies' year are between $`r min_year`$ to $`r max_year`$.
+
+
+```{r}
+binaryratings <- ratings
+
+
+
+for (i in 1:nrow(binaryratings)){
+  if (binaryratings[i,3] > 3){
+    binaryratings[i,3] <- 1
+  }
+  else{
+    binaryratings[i,3] <- -1
+  }
+}
+
+binaryratings2 <- dcast(binaryratings, MovieID~UserID, value.var = "Rating", na.rm=FALSE)
+
+
+
+for (i in 1:ncol(binaryratings2)){
+  binaryratings2[which(is.na(binaryratings2[,i]) == TRUE),i] <- 0
+}
+binaryratings2 = binaryratings2[,-1] 
+
+MovieIDs <- length(unique(movies$MovieID)) 
+ratingMovieIDs <- length(unique(ratings$MovieID)) 
+movies2 <- movies[-which((movies$MovieID %in% ratings$MovieID) == FALSE),]
+rownames(movies2) <- NULL
+
+genre_matrix3 <- genre_matrix2[-which((movies$MovieID %in% ratings$MovieID) == FALSE),]
+rownames(genre_matrix3) <- NULL
+
+result = matrix(0,18,nrow(users)) 
+for (c in 1:ncol(binaryratings2)){
+  for (i in 1:ncol(genre_matrix3)){
+    result[i,c] <- sum((genre_matrix3[,i]) * (as.numeric(binaryratings2[,c]))) 
+  }
+}
+
+for (c in 1:ncol(result)){
+  for (i in 1:nrow(result)){
+    if (result[i,c] < 0){
+      result[i,c] <- 0
+    }
+    else {
+      result[i,c] <- 1
+    }
+  }
+}
+
+ratingmat <- dcast(ratings, UserID~MovieID, value.var = "Rating", na.rm=FALSE)
+ratingmat <- as.matrix(ratingmat[,-1]) 
+
+ratingmat <- as(ratingmat, "realRatingMatrix")
+
+similarity_users <- similarity(ratingmat[1:4, ], 
+                               method = "cosine", 
+                               which = "users")
+as.matrix(similarity_users)
+
+```
+
+
+
+### Exploring Similarity Data
+
+```{r echo=TRUE}
+
+image(as.matrix(similarity_users), main = "User similarity")
+
+```
+
+
+```{r}
+
+
+similarity_items <- similarity(ratingmat[, 1:4], method =
+                                 "cosine", which = "items")
+as.matrix(similarity_items)
+
+```
+
+
+```{r echo=TRUE}
+
+image(as.matrix(similarity_items), main = "Item similarity")
+
+```
+
+
+### Most Viewed Movies Visualization 
+
+```{r}
+
+vector_ratings <- as.vector(ratingmat@data)
+unique(vector_ratings) 
+
+table_ratings <- table(vector_ratings) 
+table_ratings
+
+
+```
+
+
+```{r echo=TRUE}
+vector_ratings <- vector_ratings[vector_ratings != 0] 
+vector_ratings <- factor(vector_ratings)
+
+qplot(vector_ratings) + 
+  ggtitle("Distribution of the ratings")
+
+```
+
+
+```{r}
+
+
+views_per_movie <- colCounts(ratingmat) 
+table_views <- data.frame(movie = names(views_per_movie), views = views_per_movie) 
+table_views <- table_views[order(table_views$views, decreasing = TRUE), ] 
+
+
+
+```
+
+
+```{r echo=TRUE}
+
+
+#Visualizing the matrix:
+image(ratingmat, main = "Heatmap of the rating matrix") # hard to read-too many dimensions
+image(ratingmat[1:10, 1:15], main = "Heatmap of the first rows and columns")
+image(ratingmat[rowCounts(ratingmat) > quantile(rowCounts(ratingmat), 0.99),
+                 colCounts(ratingmat) > quantile(colCounts(ratingmat), 0.99)], 
+      main = "Heatmap of the top users and movies")
+
+
+#Normalize the data
+ratingmat_norm <- normalize(ratingmat)
+image(ratingmat_norm[rowCounts(ratingmat_norm) > quantile(rowCounts(ratingmat_norm), 0.99),
+                colCounts(ratingmat_norm) > quantile(colCounts(ratingmat_norm), 0.99)], 
+      main = "Heatmap of the top users and movies")
+
+
+
+```
+
+## System I
+
+system I is content based recommendation system, where movies will be recommended to the user based on user's favorite genre.
+
+### Method I: Highly-rate movies
+
+  The average point of each movie is calculated and N movies are randomly picked whose average point is great or equal to 4-point in the genres. 
+
+
+```{r}
+  # Method 1:
+  numberofmovierecommend = 5
+
+  input_genre1 = genre_list[1]
+  input_genre2 = genre_list[2]
+  input_genre3 = genre_list[3]
+
+  systemresult = subset(moviesList,AveRating>=4 & (grepl(input_genre1, genres, fixed = TRUE) | grepl(input_genre2, genres, fixed = TRUE) | grepl(input_genre3, genres, fixed = TRUE)) )
+  if (nrow(systemresult) < numberofmovierecommend){
+     systemresult = subset(moviesList, grepl(input_genre1, genres, fixed = TRUE) | grepl(input_genre2, genres, fixed = TRUE) | grepl(input_genre3, genres, fixed = TRUE))
+  }
+
+  systemresult = systemresult[sample(nrow(systemresult), ifelse(nrow(systemresult)>=numberofmovierecommend,numberofmovierecommend,nrow(systemresult))),]
+  systemresult
+
+
+```
+  
+
+  
+### Method II: Most trendy movies
+
+  The newest movies are from year 2000 in the dataset, N movies will be randomly picked from year 2000 in that genres, 
+  
+
+```{r}
+  # Method 2:
+  numberofmovierecommend = 5
+  trendyYear = 2000
+
+  input_genre1 = genre_list[1]
+  input_genre2 = genre_list[2]
+  input_genre3 = genre_list[3]
+
+
+  systemresult = subset(movies_clean, year >= trendyYear & (grepl(input_genre1, genres, fixed = TRUE) | grepl(input_genre2, genres, fixed = TRUE) | grepl(input_genre3, genres, fixed = TRUE)) )
+  if (nrow(systemresult) < numberofmovierecommend){
+      systemresult = subset(movies_clean, year >= trendyYear - 1 & (grepl(input_genre1, genres, fixed = TRUE) | grepl(input_genre2, genres, fixed = TRUE) | grepl(input_genre3, genres, fixed = TRUE)) )
+  }
+  systemresult = systemresult[sample(nrow(systemresult), ifelse(nrow(systemresult)>=numberofmovierecommend,numberofmovierecommend,nrow(systemresult))),]
+  systemresult
+```
+
+
+
+## System II
+
+### Create realRatingMatrix
+
+```{r}
+ratings <- as(ratings, 'realRatingMatrix')
+```
+
+
+### Training and Testing Data
+Splitting the data into 80% training and 20% testing. 
+
+```{r}
+train_proportion <- 0.8
+folds <-10
+to_keep <- 15  ## given 15 items
+threshold <- 0 ## ratings above 0 as the cutoff point
+
+# split the data into the training and the test set:
+e <- evaluationScheme(ratings, method="split", train=train_proportion, k=folds, given=to_keep, goodRating=threshold)
+e
+
+```
+  
+
+### Train User-based and Item-based Collaborative Filtering models
+
+CF models are trained by below parameters:
+
+- normalize: NULL, center or Z-score;
+
+- method: Euclidean
+
+
+
+#### User-Based Collaborative Filtering: Euclidean Distance
+
+```{r}
+# train UBCF Euclidean Distance models
+
+# non-normalized
+UBCF_N_E <- Recommender(getData(e, "train"), "UBCF", param=list(normalize = NULL, method="Euclidean"))
+saveRDS(UBCF_N_E, file = "model/UBCF_N_E_model.rds")
+reloadModel = readRDS("model/UBCF_N_E_model.rds")
+
+# centered
+UBCF_C_E <- Recommender(getData(e, "train"), "UBCF", param=list(normalize = "center",method="Euclidean"))
+saveRDS(UBCF_C_E, file = "model/UBCF_C_E_model.rds")
+reloadModel = readRDS("model/UBCF_C_E_model.rds")
+
+# Z-score normalization
+UBCF_Z_E <- Recommender(getData(e, "train"), "UBCF", param=list(normalize = "Z-score",method="Euclidean"))
+saveRDS(UBCF_Z_E, file = "model/UBCF_Z_E_model.rds")
+reloadModel = readRDS("model/UBCF_Z_E_model.rds")
+
+```
+
+
+
+```{r}
+# compute predicted ratings
+p1 <- predict(UBCF_N_E, getData(e, "known"), type="ratings")
+p2 <- predict(UBCF_C_E, getData(e, "known"), type="ratings")
+p3 <- predict(UBCF_Z_E, getData(e, "known"), type="ratings")
+
+# aggregate the performance statistics
+error_UEUC <- rbind(
+  UBCF_N_E = calcPredictionAccuracy(p1, getData(e, "unknown")),
+  UBCF_C_E = calcPredictionAccuracy(p2, getData(e, "unknown")),
+  UBCF_Z_E = calcPredictionAccuracy(p3, getData(e, "unknown"))
+)
+```
+
+
+
+#### Item-Based Collaborative Filtering: Euclidean Distance
+
+```{r}
+#train IBCF Euclidean Distance models
+
+# non-normalized
+IBCF_N_E <- Recommender(getData(e, "train"), "IBCF", param=list(normalize = NULL, method="Euclidean"))
+saveRDS(IBCF_N_E, file = "model/IBCF_N_E_model.rds")
+reloadModel = readRDS("model/IBCF_N_E_model.rds")
+
+# centered
+IBCF_C_E <- Recommender(getData(e, "train"), "IBCF", param=list(normalize = "center",method="Euclidean"))
+saveRDS(IBCF_C_E, file = "model/IBCF_C_E_model.rds")
+reloadModel = readRDS("model/IBCF_C_E_model.rds")
+
+# Z-score normalization
+IBCF_Z_E <- Recommender(getData(e, "train"), "IBCF", param=list(normalize = "Z-score",method="Euclidean"))
+saveRDS(IBCF_Z_E, file = "model/IBCF_Z_E_model.rds")
+reloadModel = readRDS("model/IBCF_Z_E_model.rds")
+
+```
+
+```{r}
+# compute predicted ratings
+p1 <- predict(IBCF_N_E, getData(e, "known"), type="ratings")
+p2 <- predict(IBCF_C_E, getData(e, "known"), type="ratings")
+p3 <- predict(IBCF_Z_E, getData(e, "known"), type="ratings")
+
+
+# aggregate the performance statistics
+error_IEUC <- rbind(
+  IBCF_N_E = calcPredictionAccuracy(p1, getData(e, "unknown")),
+  IBCF_C_E = calcPredictionAccuracy(p2, getData(e, "unknown")),
+  IBCF_Z_E = calcPredictionAccuracy(p3, getData(e, "unknown"))
+)
+```
+
+```{r}
+c_res <- data.frame(rbind(error_UEUC, error_IEUC))
+c_res <- c_res[order(c_res$RMSE ),]
+kable(c_res)
+```
+
+
+```{r}
+barplot(c_res$RMSE, col = "yellow", main = "Model RMSEs", las = 2, ylab = "RMSE", horiz = FALSE,
+        names.arg = rownames(c_res), cex.names=.8)
+```
+
+
+#### Evaluation result
+From the above plot, it looks like the performance(prediction accuracy) of User-based Collaborative Fingering  is better than Item-based Collaborative Filtering. 
+
+
+#### Save pre-trained models
+Training a model is time consuming. The model object is stored in .rds format to save time and to be used by the App.
+
+
+## Technical details
+
+- The models are normalized using normalization settings, like 'center','Z-score'.
+
+- The similarity metric used is Euclidean Distance.
+
+- The prediction we are using on content-based algorithm(System I) is not based on a 'weighted average'.
+
+
+## Movie Recommendation App
+
+  * It is a shiny app with System I and System II algorithms
+  * System I (content based)
+    + The app needs to take the input from users of their favorite genres, and display the result
+    + System will provide two methods for System I 
+  
+ * System II (Collaborative Filtering)
+   + The app need the users to rate as many movies as possible;
+   + System will discover movies for the users by User-based or Item-based Collaborative Filtering models
+
+ * Setting
+   + Select the algorithm for System I
+   + Select the algorithm for System II
+
+
+## Running the App
+
+We run the following code on RStudio console using the following command:
+
+**shiny::runApp('app')**
+
+
+## Conclusion
+
+Multiple models were compared on the dataset, System II Collaborative Filtering is an improvement over the 
+System I (content based recommendation system). 
+
+
+
+```{r}
+Sys.time() - start_time
+```
+
